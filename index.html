@@ -17,6 +17,7 @@
     .out { font-size: 16px; margin-top: 10px; }
     .mono { font-variant-numeric: tabular-nums; }
     .small { color:#666; font-size:12px; margin-top:10px; }
+    .hint { margin-top:10px; font-size:14px; }
   </style>
 </head>
 <body>
@@ -35,20 +36,24 @@
     <div class="row">
       <div>
         <label>Low (¢/pt)</label>
-        <input id="low" type="number" inputmode="decimal" min="0.1" step="0.1" value="0.5" />
+        <input id="low" type="number" inputmode="decimal" min="0.1" step="0.1" value="0.6" />
       </div>
       <div>
         <label>Typical (¢/pt)</label>
-        <input id="typ" type="number" inputmode="decimal" min="0.1" step="0.1" value="0.7" />
+        <input id="typ" type="number" inputmode="decimal" min="0.1" step="0.1" value="0.8" />
       </div>
       <div>
         <label>High (¢/pt)</label>
-        <input id="high" type="number" inputmode="decimal" min="0.1" step="0.1" value="1.0" />
+        <input id="high" type="number" inputmode="decimal" min="0.1" step="0.1" value="1.1" />
       </div>
     </div>
 
     <div class="out mono" id="output"></div>
-    <div class="small">Tip: Typical = your “expected” value; low/high show a realistic range.</div>
+    <div class="hint" id="guidance"></div>
+    <div class="small">
+      Tip: Typical reflects a reasonable expected value.  
+      Compare implied cents-per-point vs your typical benchmark before redeeming.
+    </div>
   </div>
 
   <script>
@@ -65,10 +70,11 @@
       const mode = $("mode").value;
       const val = parseFloat($("inputValue").value || "0");
 
-      // cents per point -> dollars per point
-      const low = parseFloat($("low").value || "0") / 100;
-      const typ = parseFloat($("typ").value || "0") / 100;
-      const high = parseFloat($("high").value || "0") / 100;
+      const low = parseFloat($("low").value) / 100;
+      const typ = parseFloat($("typ").value) / 100;
+      const high = parseFloat($("high").value) / 100;
+
+      $("guidance").textContent = "";
 
       if (!(low > 0 && typ > 0 && high > 0)) {
         $("output").textContent = "Enter positive values for cents/point.";
@@ -84,26 +90,45 @@
         const low$ = val * low;
         const typ$ = val * typ;
         const high$ = val * high;
+
         $("output").innerHTML =
           `<b>Estimated value</b><br>
            Low: ${fmtMoney(low$)}<br>
            Typical: ${fmtMoney(typ$)}<br>
-           High: ${fmtMoney(high$)}`
+           High: ${fmtMoney(high$)}`;
       } else {
         $("inputLabel").textContent = "Cash price (USD)";
-        // Best case uses higher cpp => fewer points required
+
         const bestPts = val / high;
         const typPts  = val / typ;
         const worstPts = val / low;
+
+        // implied cents per point using typical estimate
+        const impliedCPP = (val / typPts) * 100;
+
+        let message = "";
+        if (impliedCPP < 0.7) {
+          message = "💡 Better to pay cash than use points at this rate.";
+        } else if (impliedCPP > 0.9) {
+          message = "✅ Points redemption looks favorable versus paying cash.";
+        } else {
+          message = "⚖️ Borderline value — depends on flexibility and alternatives.";
+        }
+
         $("output").innerHTML =
           `<b>Estimated points needed</b><br>
            Best-case: ${fmtPts(bestPts)}<br>
            Typical: ${fmtPts(typPts)}<br>
-           Worst-case: ${fmtPts(worstPts)}`
+           Worst-case: ${fmtPts(worstPts)}`;
+
+        $("guidance").textContent =
+          `${message} (Implied value ≈ ${impliedCPP.toFixed(2)}¢ per point)`;
       }
     }
 
-    ["mode","inputValue","low","typ","high"].forEach(id => $(id).addEventListener("input", recalc));
+    ["mode","inputValue","low","typ","high"].forEach(id =>
+      $(id).addEventListener("input", recalc)
+    );
     recalc();
   </script>
 </body>

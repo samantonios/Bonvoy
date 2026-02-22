@@ -5,33 +5,77 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <title>Bonvoy Value</title>
+  <title>Bonvoy: Pay Cash vs Use Points</title>
   <style>
     body { font-family: -apple-system, system-ui, sans-serif; margin: 18px; line-height: 1.25; }
     h1 { font-size: 20px; margin: 0 0 12px; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
     label { display:block; font-size: 14px; margin: 10px 0 6px; }
-    input, select { width: 100%; font-size: 16px; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
+    input { width: 100%; font-size: 16px; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
     .row { display:flex; gap:10px; }
     .row > div { flex:1; }
     .out { font-size: 16px; margin-top: 10px; }
     .mono { font-variant-numeric: tabular-nums; }
     .small { color:#666; font-size:12px; margin-top:10px; }
     .hint { margin-top:10px; font-size:14px; }
+
+    /* Slider bar */
+    .barWrap { margin-top: 14px; }
+    .barTop { display:flex; justify-content:space-between; font-size:12px; color:#555; margin-bottom:6px; }
+    .bar {
+      position: relative;
+      height: 18px;
+      border-radius: 999px;
+      border: 1px solid #ddd;
+      /* left = cash better, right = points better */
+      background: linear-gradient(90deg, #f5f5f5 0%, #e9e9e9 35%, #e9e9e9 65%, #f5f5f5 100%);
+      overflow: hidden;
+    }
+    .zones {
+      position:absolute; inset:0;
+      background: linear-gradient(90deg,
+        rgba(255, 99, 71, .28) 0%,
+        rgba(255, 99, 71, .18) 35%,
+        rgba(255, 215, 0,  .18) 35%,
+        rgba(255, 215, 0,  .18) 65%,
+        rgba(60, 179, 113,.18) 65%,
+        rgba(60, 179, 113,.28) 100%
+      );
+    }
+    .marker {
+      position:absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 0; height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 12px solid #111;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,.25));
+    }
+    .tick {
+      position:absolute; top:0; bottom:0; width:1px; background:#666; opacity:.45;
+    }
+    .tickLabelRow { display:flex; justify-content:space-between; font-size:11px; color:#555; margin-top:6px; }
+    .pill {
+      display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid #ddd;
+      background:#fafafa; font-size:13px;
+    }
   </style>
 </head>
 <body>
-  <h1>Bonvoy Points ↔ Dollar Value</h1>
+  <h1>Bonvoy: Pay Cash vs Use Points</h1>
 
   <div class="card">
-    <label>Mode</label>
-    <select id="mode">
-      <option value="p2$">Points → Dollars</option>
-      <option value="$2p">Dollars → Points</option>
-    </select>
-
-    <label id="inputLabel">Bonvoy points</label>
-    <input id="inputValue" type="number" inputmode="numeric" min="0" step="1000" value="200000" />
+    <div class="row">
+      <div>
+        <label>Cash price (USD)</label>
+        <input id="cash" type="number" inputmode="decimal" min="0" step="1" value="1080" />
+      </div>
+      <div>
+        <label>Bonvoy points</label>
+        <input id="points" type="number" inputmode="numeric" min="0" step="1000" value="217000" />
+      </div>
+    </div>
 
     <div class="row">
       <div>
@@ -49,10 +93,38 @@
     </div>
 
     <div class="out mono" id="output"></div>
+
+    <!-- Horizontal guide bar -->
+    <div class="barWrap">
+      <div class="barTop">
+        <span><b>Pay Dollars Better</b></span>
+        <span><b>Use Points Better</b></span>
+      </div>
+
+      <div class="bar" id="bar">
+        <div class="zones"></div>
+
+        <!-- ticks at low/typ/high -->
+        <div class="tick" id="tickLow"></div>
+        <div class="tick" id="tickTyp"></div>
+        <div class="tick" id="tickHigh"></div>
+
+        <!-- marker for implied CPP -->
+        <div class="marker" id="marker" aria-label="Implied value marker"></div>
+      </div>
+
+      <div class="tickLabelRow mono">
+        <span id="lblLow"></span>
+        <span id="lblTyp"></span>
+        <span id="lblHigh"></span>
+      </div>
+    </div>
+
     <div class="hint" id="guidance"></div>
+
     <div class="small">
-      Tip: Typical reflects a reasonable expected value.  
-      Compare implied cents-per-point vs your typical benchmark before redeeming.
+      How it works: we compute <b>implied value</b> = (cash ÷ points) in ¢/pt and compare it to your Low/Typical/High benchmarks.
+      Slide left = cash is usually better; slide right = points usually better.
     </div>
   </div>
 
@@ -66,15 +138,39 @@
       return Math.round(x).toLocaleString() + " pts";
     }
 
-    function recalc() {
-      const mode = $("mode").value;
-      const val = parseFloat($("inputValue").value || "0");
+    // Map a cents-per-point value to a 0–100% position on the bar.
+    // We center around Typical and use Low/High to define the left/right "goodness" boundaries.
+    function cppToPercent(cpp, low, typ, high) {
+      // Guard: if ranges are weird, just center.
+      if (!(low > 0 && typ > 0 && high > 0) || !(low <= typ && typ <= high) || (high - low) <= 0) return 50;
 
-      const low = parseFloat($("low").value) / 100;
-      const typ = parseFloat($("typ").value) / 100;
-      const high = parseFloat($("high").value) / 100;
+      // Piecewise mapping: [low..typ] -> [0..50], [typ..high] -> [50..100]
+      if (cpp <= low) return 0;
+      if (cpp >= high) return 100;
+
+      if (cpp <= typ) {
+        const denom = (typ - low) || 1e-9;
+        return ((cpp - low) / denom) * 50;
+      } else {
+        const denom = (high - typ) || 1e-9;
+        return 50 + ((cpp - typ) / denom) * 50;
+      }
+    }
+
+    function setLeftPct(el, pct) {
+      el.style.left = `${pct}%`;
+    }
+
+    function recalc() {
+      const cash = parseFloat($("cash").value || "0");
+      const points = parseFloat($("points").value || "0");
+
+      const low = parseFloat($("low").value);
+      const typ = parseFloat($("typ").value);
+      const high = parseFloat($("high").value);
 
       $("guidance").textContent = "";
+      $("output").textContent = "";
 
       if (!(low > 0 && typ > 0 && high > 0)) {
         $("output").textContent = "Enter positive values for cents/point.";
@@ -84,49 +180,71 @@
         $("output").textContent = "Make sure Low ≤ Typical ≤ High.";
         return;
       }
-
-      if (mode === "p2$") {
-        $("inputLabel").textContent = "Bonvoy points";
-        const low$ = val * low;
-        const typ$ = val * typ;
-        const high$ = val * high;
-
-        $("output").innerHTML =
-          `<b>Estimated value</b><br>
-           Low: ${fmtMoney(low$)}<br>
-           Typical: ${fmtMoney(typ$)}<br>
-           High: ${fmtMoney(high$)}`;
-      } else {
-        $("inputLabel").textContent = "Cash price (USD)";
-
-        const bestPts = val / high;
-        const typPts  = val / typ;
-        const worstPts = val / low;
-
-        // implied cents per point using typical estimate
-        const impliedCPP = (val / typPts) * 100;
-
-        let message = "";
-        if (impliedCPP < 0.8) {
-          message = "💡 Better to pay cash than use points at this rate.";
-        } else if (impliedCPP > 1.1) {
-          message = "✅ Points redemption looks favorable versus paying cash.";
-        } else {
-          message = "⚖️ Borderline value — depends on flexibility and alternatives.";
-        }
-
-        $("output").innerHTML =
-          `<b>Estimated points needed</b><br>
-           Best-case: ${fmtPts(bestPts)}<br>
-           Typical: ${fmtPts(typPts)}<br>
-           Worst-case: ${fmtPts(worstPts)}`;
-
-        $("guidance").textContent =
-          `${message} (Implied value ≈ ${impliedCPP.toFixed(2)}¢ per point)`;
+      if (!(cash > 0) || !(points > 0)) {
+        $("output").textContent = "Enter both a cash price and a points amount.";
+        // still place ticks
       }
+
+      // implied cpp from these two inputs
+      const impliedCPP = (cash > 0 && points > 0) ? (cash / points) * 100 : 0;
+
+      // Estimated dollar value of the points using your benchmarks
+      const low$ = points * (low / 100);
+      const typ$ = points * (typ / 100);
+      const high$ = points * (high / 100);
+
+      // Decision message
+      let message = "";
+      let badge = "";
+
+      if (cash > 0 && points > 0) {
+        if (impliedCPP < low) {
+          message = "💡 Strongly favors paying cash (redemption value is below your LOW benchmark).";
+          badge = "Pay cash";
+        } else if (impliedCPP < typ) {
+          message = "↘️ Lean toward paying cash (below your TYPICAL benchmark).";
+          badge = "Probably cash";
+        } else if (impliedCPP <= high) {
+          message = "✅ Points look reasonable-to-good (at/above TYPICAL).";
+          badge = "Probably points";
+        } else {
+          message = "🔥 Excellent points value (above your HIGH benchmark).";
+          badge = "Use points";
+        }
+      }
+
+      // Output block
+      const savingsUsingTyp = (cash > 0 && points > 0) ? (cash - typ$) : 0;
+      const savingsText = (cash > 0 && points > 0)
+        ? `${savingsUsingTyp >= 0 ? "Points (typical) are worth" : "Cash price is lower than"} ${fmtMoney(Math.abs(savingsUsingTyp))} vs your TYPICAL point value.`
+        : "";
+
+      $("output").innerHTML =
+        `<div class="pill"><b>Implied value:</b> ${impliedCPP ? impliedCPP.toFixed(2) : "—"}¢/pt ${badge ? `• <b>${badge}</b>` : ""}</div>
+         <div style="margin-top:10px">
+           <b>Your points are “worth” (by your benchmarks)</b><br>
+           Low: ${fmtMoney(low$)} • Typical: ${fmtMoney(typ$)} • High: ${fmtMoney(high$)}<br>
+           <b>Cash price:</b> ${cash ? fmtMoney(cash) : "—"} • <b>Points:</b> ${points ? fmtPts(points) : "—"}<br>
+           ${savingsText ? `<span style="color:#444">${savingsText}</span>` : ""}
+         </div>`;
+
+      $("guidance").textContent = message;
+
+      // Place ticks at low/typ/high
+      setLeftPct($("tickLow"), 0);
+      setLeftPct($("tickTyp"), 50);
+      setLeftPct($("tickHigh"), 100);
+
+      $("lblLow").textContent = `Low ${low.toFixed(1)}¢`;
+      $("lblTyp").textContent = `Typical ${typ.toFixed(1)}¢`;
+      $("lblHigh").textContent = `High ${high.toFixed(1)}¢`;
+
+      // Move marker to implied cpp
+      const markerPct = cppToPercent(impliedCPP, low, typ, high);
+      setLeftPct($("marker"), markerPct);
     }
 
-    ["mode","inputValue","low","typ","high"].forEach(id =>
+    ["cash","points","low","typ","high"].forEach(id =>
       $(id).addEventListener("input", recalc)
     );
     recalc();

@@ -12,12 +12,17 @@
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
     label { display:block; font-size: 14px; margin: 10px 0 6px; }
     input { width: 100%; font-size: 16px; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
-    .row { display:flex; gap:10px; }
-    .row > div { flex:1; }
+    .row { display:flex; gap:10px; flex-wrap: wrap; }
+    .row > div { flex:1; min-width: 180px; }
     .out { font-size: 16px; margin-top: 10px; }
     .mono { font-variant-numeric: tabular-nums; }
     .small { color:#666; font-size:12px; margin-top:10px; }
     .hint { margin-top:10px; font-size:14px; }
+
+    .pill {
+      display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid #ddd;
+      background:#fafafa; font-size:13px;
+    }
 
     /* Slider bar */
     .barWrap { margin-top: 14px; }
@@ -27,38 +32,74 @@
       height: 18px;
       border-radius: 999px;
       border: 1px solid #ddd;
-      /* left = cash better, right = points better */
-      background: linear-gradient(90deg, #f5f5f5 0%, #e9e9e9 35%, #e9e9e9 65%, #f5f5f5 100%);
       overflow: hidden;
+      background: #f3f3f3;
     }
+
+    /* Value zones (fixed “decision” coloring) */
     .zones {
       position:absolute; inset:0;
       background: linear-gradient(90deg,
-        rgba(255, 99, 71, .28) 0%,
+        rgba(255, 99, 71, .30) 0%,
         rgba(255, 99, 71, .18) 35%,
         rgba(255, 215, 0,  .18) 35%,
         rgba(255, 215, 0,  .18) 65%,
         rgba(60, 179, 113,.18) 65%,
-        rgba(60, 179, 113,.28) 100%
+        rgba(60, 179, 113,.30) 100%
       );
     }
+
+    /* Dynamic “fill” that pushes toward the better side */
+    .fill {
+      position:absolute; top:0; bottom:0;
+      width:0%;
+      opacity: .35;
+    }
+    .fill.left {
+      left:0;
+      background: linear-gradient(90deg, rgba(255,99,71,.55), rgba(255,99,71,0));
+    }
+    .fill.right {
+      right:0;
+      background: linear-gradient(270deg, rgba(60,179,113,.55), rgba(60,179,113,0));
+    }
+
+    /* ticks for low/typ/high */
+    .tick { position:absolute; top:0; bottom:0; width:1px; background:#666; opacity:.45; z-index: 2; }
+
+    /* Visible marker (dot) */
     .marker {
       position:absolute;
       top: 50%;
       transform: translate(-50%, -50%);
-      width: 0; height: 0;
-      border-left: 8px solid transparent;
-      border-right: 8px solid transparent;
-      border-top: 12px solid #111;
-      filter: drop-shadow(0 1px 1px rgba(0,0,0,.25));
+      width: 14px;
+      height: 14px;
+      background: #111;
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px white, 0 2px 4px rgba(0,0,0,0.4);
+      z-index: 5;
     }
-    .tick {
-      position:absolute; top:0; bottom:0; width:1px; background:#666; opacity:.45;
+
+    /* Floating label above marker */
+    .markerLabel {
+      position:absolute;
+      top: -28px;
+      transform: translateX(-50%);
+      font-size: 11px;
+      background: #111;
+      color: white;
+      padding: 3px 7px;
+      border-radius: 8px;
+      white-space: nowrap;
+      z-index: 6;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.25);
     }
+
     .tickLabelRow { display:flex; justify-content:space-between; font-size:11px; color:#555; margin-top:6px; }
-    .pill {
-      display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid #ddd;
-      background:#fafafa; font-size:13px;
+    .scoreRow { margin-top: 10px; display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
+    .scoreBadge {
+      display:inline-block; padding:6px 10px; border-radius:999px;
+      border: 1px solid #ddd; background:#fff; font-size: 13px;
     }
   </style>
 </head>
@@ -94,7 +135,7 @@
 
     <div class="out mono" id="output"></div>
 
-    <!-- Horizontal guide bar -->
+    <!-- Slider -->
     <div class="barWrap">
       <div class="barTop">
         <span><b>Pay Dollars Better</b></span>
@@ -104,13 +145,18 @@
       <div class="bar" id="bar">
         <div class="zones"></div>
 
-        <!-- ticks at low/typ/high -->
+        <!-- dynamic fill (left or right) -->
+        <div class="fill left" id="fillLeft"></div>
+        <div class="fill right" id="fillRight"></div>
+
+        <!-- benchmark ticks -->
         <div class="tick" id="tickLow"></div>
         <div class="tick" id="tickTyp"></div>
         <div class="tick" id="tickHigh"></div>
 
-        <!-- marker for implied CPP -->
-        <div class="marker" id="marker" aria-label="Implied value marker"></div>
+        <!-- marker + label -->
+        <div class="marker" id="marker"></div>
+        <div class="markerLabel" id="markerLabel"></div>
       </div>
 
       <div class="tickLabelRow mono">
@@ -120,11 +166,14 @@
       </div>
     </div>
 
-    <div class="hint" id="guidance"></div>
+    <div class="scoreRow">
+      <div class="scoreBadge" id="scoreBadge">Value score: —</div>
+      <div class="hint" id="guidance" style="margin:0;"></div>
+    </div>
 
     <div class="small">
-      How it works: we compute <b>implied value</b> = (cash ÷ points) in ¢/pt and compare it to your Low/Typical/High benchmarks.
-      Slide left = cash is usually better; slide right = points usually better.
+      We compute <b>implied value</b> = (cash ÷ points) in ¢/pt and compare it to your Low/Typical/High benchmarks.
+      The marker always stays visible, even when implied value is below Low or above High.
     </div>
   </div>
 
@@ -137,28 +186,26 @@
     function fmtPts(x) {
       return Math.round(x).toLocaleString() + " pts";
     }
+    function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 
-    // Map a cents-per-point value to a 0–100% position on the bar.
-    // We center around Typical and use Low/High to define the left/right "goodness" boundaries.
+    // Dynamic scale mapping to keep marker visible even outside [low, high]
     function cppToPercent(cpp, low, typ, high) {
-      // Guard: if ranges are weird, just center.
-      if (!(low > 0 && typ > 0 && high > 0) || !(low <= typ && typ <= high) || (high - low) <= 0) return 50;
-
-      // Piecewise mapping: [low..typ] -> [0..50], [typ..high] -> [50..100]
-      if (cpp <= low) return 0;
-      if (cpp >= high) return 100;
-
-      if (cpp <= typ) {
-        const denom = (typ - low) || 1e-9;
-        return ((cpp - low) / denom) * 50;
-      } else {
-        const denom = (high - typ) || 1e-9;
-        return 50 + ((cpp - typ) / denom) * 50;
-      }
+      const min = Math.min(low * 0.70, cpp * 0.80);
+      const max = Math.max(high * 1.30, cpp * 1.20);
+      if (max <= min) return 50;
+      let pct = ((cpp - min) / (max - min)) * 100;
+      return clamp(pct, 5, 95); // keep visible
     }
 
-    function setLeftPct(el, pct) {
-      el.style.left = `${pct}%`;
+    function setLeftPct(el, pct) { el.style.left = pct + "%"; }
+
+    function valueScore(implied, low, typ, high) {
+      // Simple 4-level score based on implied CPP vs benchmarks
+      if (implied <= 0) return { label: "—", note: "" };
+      if (implied < low) return { label: "Poor", note: "Below Low" };
+      if (implied < typ) return { label: "Fair", note: "Below Typical" };
+      if (implied <= high) return { label: "Good", note: "At/above Typical" };
+      return { label: "Excellent", note: "Above High" };
     }
 
     function recalc() {
@@ -171,6 +218,16 @@
 
       $("guidance").textContent = "";
       $("output").textContent = "";
+      $("scoreBadge").textContent = "Value score: —";
+
+      // ticks always at 0/50/100 so the zones remain intuitive
+      setLeftPct($("tickLow"), 0);
+      setLeftPct($("tickTyp"), 50);
+      setLeftPct($("tickHigh"), 100);
+
+      $("lblLow").textContent = `Low ${low.toFixed(1)}¢`;
+      $("lblTyp").textContent = `Typical ${typ.toFixed(1)}¢`;
+      $("lblHigh").textContent = `High ${high.toFixed(1)}¢`;
 
       if (!(low > 0 && typ > 0 && high > 0)) {
         $("output").textContent = "Enter positive values for cents/point.";
@@ -182,66 +239,82 @@
       }
       if (!(cash > 0) || !(points > 0)) {
         $("output").textContent = "Enter both a cash price and a points amount.";
-        // still place ticks
+        // put marker at center with label
+        setLeftPct($("marker"), 50);
+        setLeftPct($("markerLabel"), 50);
+        $("markerLabel").textContent = "—";
+        $("fillLeft").style.width = "0%";
+        $("fillRight").style.width = "0%";
+        return;
       }
 
-      // implied cpp from these two inputs
-      const impliedCPP = (cash > 0 && points > 0) ? (cash / points) * 100 : 0;
+      // implied cpp from the two inputs
+      const impliedCPP = (cash / points) * 100;
 
-      // Estimated dollar value of the points using your benchmarks
-      const low$ = points * (low / 100);
-      const typ$ = points * (typ / 100);
+      // Estimated $ value of points using benchmarks
+      const low$  = points * (low / 100);
+      const typ$  = points * (typ / 100);
       const high$ = points * (high / 100);
 
-      // Decision message
+      // Guidance + badge
       let message = "";
       let badge = "";
 
-      if (cash > 0 && points > 0) {
-        if (impliedCPP < low) {
-          message = "💡 Strongly favors paying cash (redemption value is below your LOW benchmark).";
-          badge = "Pay cash";
-        } else if (impliedCPP < typ) {
-          message = "↘️ Lean toward paying cash (below your TYPICAL benchmark).";
-          badge = "Probably cash";
-        } else if (impliedCPP <= high) {
-          message = "✅ Points look reasonable-to-good (at/above TYPICAL).";
-          badge = "Probably points";
-        } else {
-          message = "🔥 Excellent points value (above your HIGH benchmark).";
-          badge = "Use points";
-        }
+      if (impliedCPP < low) {
+        message = "💡 Strongly favors paying cash (redemption value is below your LOW benchmark).";
+        badge = "Pay cash";
+      } else if (impliedCPP < typ) {
+        message = "↘️ Lean toward paying cash (below your TYPICAL benchmark).";
+        badge = "Probably cash";
+      } else if (impliedCPP <= high) {
+        message = "✅ Points look reasonable-to-good (at/above TYPICAL).";
+        badge = "Probably points";
+      } else {
+        message = "🔥 Excellent points value (above your HIGH benchmark).";
+        badge = "Use points";
       }
 
+      const score = valueScore(impliedCPP, low, typ, high);
+      $("scoreBadge").textContent = `Value score: ${score.label}${score.note ? " (" + score.note + ")" : ""}`;
+
       // Output block
-      const savingsUsingTyp = (cash > 0 && points > 0) ? (cash - typ$) : 0;
-      const savingsText = (cash > 0 && points > 0)
-        ? `${savingsUsingTyp >= 0 ? "Points (typical) are worth" : "Cash price is lower than"} ${fmtMoney(Math.abs(savingsUsingTyp))} vs your TYPICAL point value.`
-        : "";
+      const deltaVsTypical = cash - typ$; // positive => points "worth more" than cash (good points)
+      const deltaText = `${deltaVsTypical >= 0 ? "Points (Typical) exceed cash by" : "Cash is lower than Typical points value by"} ${fmtMoney(Math.abs(deltaVsTypical))}.`;
 
       $("output").innerHTML =
-        `<div class="pill"><b>Implied value:</b> ${impliedCPP ? impliedCPP.toFixed(2) : "—"}¢/pt ${badge ? `• <b>${badge}</b>` : ""}</div>
+        `<div class="pill"><b>Implied value:</b> ${impliedCPP.toFixed(2)}¢/pt • <b>${badge}</b></div>
          <div style="margin-top:10px">
            <b>Your points are “worth” (by your benchmarks)</b><br>
            Low: ${fmtMoney(low$)} • Typical: ${fmtMoney(typ$)} • High: ${fmtMoney(high$)}<br>
-           <b>Cash price:</b> ${cash ? fmtMoney(cash) : "—"} • <b>Points:</b> ${points ? fmtPts(points) : "—"}<br>
-           ${savingsText ? `<span style="color:#444">${savingsText}</span>` : ""}
+           <b>Cash price:</b> ${fmtMoney(cash)} • <b>Points:</b> ${fmtPts(points)}<br>
+           <span style="color:#444">${deltaText}</span>
          </div>`;
 
       $("guidance").textContent = message;
 
-      // Place ticks at low/typ/high
-      setLeftPct($("tickLow"), 0);
-      setLeftPct($("tickTyp"), 50);
-      setLeftPct($("tickHigh"), 100);
-
-      $("lblLow").textContent = `Low ${low.toFixed(1)}¢`;
-      $("lblTyp").textContent = `Typical ${typ.toFixed(1)}¢`;
-      $("lblHigh").textContent = `High ${high.toFixed(1)}¢`;
-
-      // Move marker to implied cpp
+      // Marker position (always visible)
       const markerPct = cppToPercent(impliedCPP, low, typ, high);
       setLeftPct($("marker"), markerPct);
+      setLeftPct($("markerLabel"), markerPct);
+      $("markerLabel").textContent = impliedCPP.toFixed(2) + "¢";
+
+      // Dynamic fill: push toward whichever side is "better"
+      // - If marker is left of center, fill from left up to marker (cash better)
+      // - If marker is right of center, fill from right up to marker (points better)
+      const center = 50;
+      const leftWidth = clamp(markerPct, 0, center);
+      const rightWidth = clamp(100 - markerPct, 0, 50);
+
+      if (markerPct < center) {
+        $("fillLeft").style.width = leftWidth + "%";
+        $("fillRight").style.width = "0%";
+      } else if (markerPct > center) {
+        $("fillLeft").style.width = "0%";
+        $("fillRight").style.width = rightWidth + "%";
+      } else {
+        $("fillLeft").style.width = "0%";
+        $("fillRight").style.width = "0%";
+      }
     }
 
     ["cash","points","low","typ","high"].forEach(id =>

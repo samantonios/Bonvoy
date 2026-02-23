@@ -18,7 +18,6 @@
     .mono { font-variant-numeric: tabular-nums; }
     .small { color:#666; font-size:12px; margin-top:10px; }
     .hint { margin-top:10px; font-size:14px; }
-
     .pill {
       display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid #ddd;
       background:#fafafa; font-size:13px;
@@ -32,19 +31,19 @@
       height: 18px;
       border-radius: 999px;
       border: 1px solid #ddd;
-      overflow: hidden;
+      overflow: visible; /* allow label above marker */
       background: #f3f3f3;
     }
 
-    /* Zones mapped to 0.0¢ → 2.0¢ scale */
+    /* Zones are recalculated in JS when benchmarks change */
     .zones {
       position:absolute; inset:0;
+      border-radius: 999px;
+      overflow:hidden;
+      z-index: 0;
       background: linear-gradient(90deg,
-        rgba(255, 99, 71, .35) 0%,     /* poor */
-        rgba(255, 99, 71, .25) 30%,
-        rgba(255, 215, 0,  .20) 40%,   /* borderline */
-        rgba(255, 215, 0,  .20) 55%,
-        rgba(60, 179, 113,.25) 65%,    /* strong */
+        rgba(255, 99, 71, .35) 0%,
+        rgba(255, 215, 0,  .20) 50%,
         rgba(60, 179, 113,.35) 100%
       );
     }
@@ -53,19 +52,20 @@
     .fill {
       position:absolute; top:0; bottom:0;
       width:0%;
-      opacity: .35;
+      opacity: .28;
       z-index: 1;
+      border-radius: 999px;
     }
     .fill.left {
       left:0;
-      background: linear-gradient(90deg, rgba(255,99,71,.55), rgba(255,99,71,0));
+      background: linear-gradient(90deg, rgba(255,99,71,.60), rgba(255,99,71,0));
     }
     .fill.right {
       right:0;
-      background: linear-gradient(270deg, rgba(60,179,113,.55), rgba(60,179,113,0));
+      background: linear-gradient(270deg, rgba(60,179,113,.60), rgba(60,179,113,0));
     }
 
-    /* Benchmark ticks (Low/Typical/High) */
+    /* Benchmark ticks */
     .tick { position:absolute; top:0; bottom:0; width:1px; background:#111; opacity:.35; z-index: 2; }
 
     /* Marker (dot) */
@@ -77,18 +77,18 @@
       height: 14px;
       background: #111;
       border-radius: 50%;
-      box-shadow: 0 0 0 2px white, 0 2px 4px rgba(0,0,0,0.4);
+      box-shadow: 0 0 0 2px white, 0 2px 4px rgba(0,0,0,0.35);
       z-index: 5;
     }
 
-    /* Floating label above marker */
-    .markerLabel {
+    /* Value label directly above marker */
+    .markerValue {
       position:absolute;
-      top: -28px;
+      top: -30px;
       transform: translateX(-50%);
       font-size: 11px;
       background: #111;
-      color: white;
+      color: #fff;
       padding: 3px 7px;
       border-radius: 8px;
       white-space: nowrap;
@@ -96,7 +96,6 @@
       box-shadow: 0 2px 4px rgba(0,0,0,0.25);
     }
 
-    /* Scale labels */
     .tickLabelRow { display:flex; justify-content:space-between; font-size:11px; color:#555; margin-top:6px; }
     .scaleRow { display:flex; justify-content:space-between; font-size:11px; color:#777; margin-top:6px; }
     .scoreRow { margin-top: 10px; display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
@@ -104,6 +103,8 @@
       display:inline-block; padding:6px 10px; border-radius:999px;
       border: 1px solid #ddd; background:#fff; font-size: 13px;
     }
+
+    .warn { color:#b00; font-size: 12px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -113,11 +114,11 @@
     <div class="row">
       <div>
         <label>Cash price (USD)</label>
-        <input id="cash" type="number" inputmode="decimal" min="0" step="1" value="2000" />
+        <input id="cash" type="number" inputmode="decimal" min="0" step="1" value="1080" />
       </div>
       <div>
         <label>Bonvoy points</label>
-        <input id="points" type="number" inputmode="numeric" min="0" step="1000" value="450000" />
+        <input id="points" type="number" inputmode="numeric" min="0" step="1000" value="217000" />
       </div>
     </div>
 
@@ -146,7 +147,7 @@
       </div>
 
       <div class="bar" id="bar">
-        <div class="zones"></div>
+        <div class="zones" id="zones"></div>
 
         <div class="fill left" id="fillLeft"></div>
         <div class="fill right" id="fillRight"></div>
@@ -156,7 +157,7 @@
         <div class="tick" id="tickHigh"></div>
 
         <div class="marker" id="marker"></div>
-        <div class="markerLabel" id="markerLabel"></div>
+        <div class="markerValue" id="markerValue"></div>
       </div>
 
       <div class="tickLabelRow mono">
@@ -170,6 +171,8 @@
         <span>1.0¢</span>
         <span>2.0¢</span>
       </div>
+
+      <div class="warn" id="warn"></div>
     </div>
 
     <div class="scoreRow">
@@ -178,8 +181,8 @@
     </div>
 
     <div class="small">
-      Bar scale is fixed from <b>0.0¢ → 2.0¢ per point</b>. Marker shows your implied value (cash ÷ points).
-      Benchmark ticks (Low/Typical/High) are plotted on the same fixed scale.
+      Bar scale is fixed from <b>0.0¢ → 2.0¢ per point</b>.
+      If you change Low/Typical/High, the colored zones and tick marks update immediately.
     </div>
   </div>
 
@@ -197,10 +200,15 @@
 
     // Fixed scale: 0.0¢ → 2.0¢
     function cppToPercent(cpp) {
-      const min = 0.0;
-      const max = 2.0;
-      let pct = ((cpp - min) / (max - min)) * 100;
-      return clamp(pct, 2, 98); // always visible
+      const min = 0.0, max = 2.0;
+      const pct = ((cpp - min) / (max - min)) * 100;
+      return clamp(pct, 1.5, 98.5); // keep visible
+    }
+    function cppToRawPercent(cpp) {
+      // not clamped, used for fill widths; still bounded 0..100
+      const min = 0.0, max = 2.0;
+      const pct = ((cpp - min) / (max - min)) * 100;
+      return clamp(pct, 0, 100);
     }
 
     function valueScore(implied, low, typ, high) {
@@ -209,6 +217,32 @@
       if (implied < typ) return { label: "Fair", note: "Below Typical" };
       if (implied <= high) return { label: "Good", note: "At/above Typical" };
       return { label: "Excellent", note: "Above High" };
+    }
+
+    function updateZones(low, typ, high) {
+      // Convert benchmarks to 0..100 positions on 0..2 scale
+      const lowP = clamp((low / 2.0) * 100, 0, 100);
+      const typP = clamp((typ / 2.0) * 100, 0, 100);
+      const highP = clamp((high / 2.0) * 100, 0, 100);
+
+      // If user makes odd values, still render something sane
+      const a = Math.min(lowP, typP, highP);
+      const b = Math.max(lowP, typP, highP);
+
+      // Build a gradient:
+      // 0..low = red-ish, low..typ = yellow-ish, typ..high = green-ish, high..100 = green-ish darker
+      // (If the inputs are reversed, we still place stops in order of low/typ/high positions)
+      const stops = [
+        `rgba(255, 99, 71, .35) 0%`,
+        `rgba(255, 99, 71, .28) ${lowP.toFixed(2)}%`,
+        `rgba(255, 215, 0,  .22) ${lowP.toFixed(2)}%`,
+        `rgba(255, 215, 0,  .22) ${typP.toFixed(2)}%`,
+        `rgba(60, 179, 113,.22) ${typP.toFixed(2)}%`,
+        `rgba(60, 179, 113,.28) ${highP.toFixed(2)}%`,
+        `rgba(60, 179, 113,.35) 100%`
+      ];
+
+      $("zones").style.background = `linear-gradient(90deg, ${stops.join(",")})`;
     }
 
     function recalc() {
@@ -222,15 +256,15 @@
       $("guidance").textContent = "";
       $("output").textContent = "";
       $("scoreBadge").textContent = "Value score: —";
+      $("warn").textContent = "";
 
       if (!(low > 0 && typ > 0 && high > 0)) {
         $("output").textContent = "Enter positive values for cents/point.";
         return;
       }
-      if (!(low <= typ && typ <= high)) {
-        $("output").textContent = "Make sure Low ≤ Typical ≤ High.";
-        return;
-      }
+
+      // Update zones whenever benchmarks change
+      updateZones(low, typ, high);
 
       // Place benchmark ticks on fixed 0→2 scale
       setLeftPct($("tickLow"), clamp((low / 2.0) * 100, 0, 100));
@@ -241,11 +275,16 @@
       $("lblTyp").textContent = `Typical ${typ.toFixed(1)}¢`;
       $("lblHigh").textContent = `High ${high.toFixed(1)}¢`;
 
+      if (!(low <= typ && typ <= high)) {
+        $("warn").textContent = "Note: benchmarks are usually Low ≤ Typical ≤ High.";
+      }
+
       if (!(cash > 0) || !(points > 0)) {
         $("output").textContent = "Enter both a cash price and a points amount.";
-        setLeftPct($("marker"), 50);
-        setLeftPct($("markerLabel"), 50);
-        $("markerLabel").textContent = "—";
+        const mid = 50;
+        setLeftPct($("marker"), mid);
+        setLeftPct($("markerValue"), mid);
+        $("markerValue").textContent = "—";
         $("fillLeft").style.width = "0%";
         $("fillRight").style.width = "0%";
         return;
@@ -293,22 +332,21 @@
            <span style="color:#444">${deltaText}</span>
          </div>`;
 
-      // Marker on fixed scale
+      // Marker position + value label above it
       const markerPct = cppToPercent(impliedCPP);
       setLeftPct($("marker"), markerPct);
-      setLeftPct($("markerLabel"), markerPct);
-      $("markerLabel").textContent = impliedCPP.toFixed(2) + "¢";
+      setLeftPct($("markerValue"), markerPct);
+      $("markerValue").textContent = impliedCPP.toFixed(2) + "¢";
 
-      // Fill toward better side:
-      // Compare implied to typical; if below typical -> fill left; else fill right.
-      const markerRawPct = clamp(((impliedCPP - 0.0) / (2.0 - 0.0)) * 100, 0, 100);
+      // Fill toward better side (compare implied vs Typical)
+      const rawPct = cppToRawPercent(impliedCPP);
 
       if (impliedCPP < typ) {
-        $("fillLeft").style.width = markerRawPct + "%";
+        $("fillLeft").style.width = rawPct + "%";
         $("fillRight").style.width = "0%";
       } else if (impliedCPP > typ) {
         $("fillLeft").style.width = "0%";
-        $("fillRight").style.width = (100 - markerRawPct) + "%";
+        $("fillRight").style.width = (100 - rawPct) + "%";
       } else {
         $("fillLeft").style.width = "0%";
         $("fillRight").style.width = "0%";

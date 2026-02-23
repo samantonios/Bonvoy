@@ -36,24 +36,25 @@
       background: #f3f3f3;
     }
 
-    /* Value zones (fixed “decision” coloring) */
+    /* Zones mapped to 0.0¢ → 2.0¢ scale */
     .zones {
       position:absolute; inset:0;
       background: linear-gradient(90deg,
-        rgba(255, 99, 71, .30) 0%,
-        rgba(255, 99, 71, .18) 35%,
-        rgba(255, 215, 0,  .18) 35%,
-        rgba(255, 215, 0,  .18) 65%,
-        rgba(60, 179, 113,.18) 65%,
-        rgba(60, 179, 113,.30) 100%
+        rgba(255, 99, 71, .35) 0%,     /* poor */
+        rgba(255, 99, 71, .25) 30%,
+        rgba(255, 215, 0,  .20) 40%,   /* borderline */
+        rgba(255, 215, 0,  .20) 55%,
+        rgba(60, 179, 113,.25) 65%,    /* strong */
+        rgba(60, 179, 113,.35) 100%
       );
     }
 
-    /* Dynamic “fill” that pushes toward the better side */
+    /* Dynamic fill that pushes toward the better side */
     .fill {
       position:absolute; top:0; bottom:0;
       width:0%;
       opacity: .35;
+      z-index: 1;
     }
     .fill.left {
       left:0;
@@ -64,10 +65,10 @@
       background: linear-gradient(270deg, rgba(60,179,113,.55), rgba(60,179,113,0));
     }
 
-    /* ticks for low/typ/high */
-    .tick { position:absolute; top:0; bottom:0; width:1px; background:#666; opacity:.45; z-index: 2; }
+    /* Benchmark ticks (Low/Typical/High) */
+    .tick { position:absolute; top:0; bottom:0; width:1px; background:#111; opacity:.35; z-index: 2; }
 
-    /* Visible marker (dot) */
+    /* Marker (dot) */
     .marker {
       position:absolute;
       top: 50%;
@@ -95,7 +96,9 @@
       box-shadow: 0 2px 4px rgba(0,0,0,0.25);
     }
 
+    /* Scale labels */
     .tickLabelRow { display:flex; justify-content:space-between; font-size:11px; color:#555; margin-top:6px; }
+    .scaleRow { display:flex; justify-content:space-between; font-size:11px; color:#777; margin-top:6px; }
     .scoreRow { margin-top: 10px; display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
     .scoreBadge {
       display:inline-block; padding:6px 10px; border-radius:999px;
@@ -110,11 +113,11 @@
     <div class="row">
       <div>
         <label>Cash price (USD)</label>
-        <input id="cash" type="number" inputmode="decimal" min="0" step="1" value="1080" />
+        <input id="cash" type="number" inputmode="decimal" min="0" step="1" value="2000" />
       </div>
       <div>
         <label>Bonvoy points</label>
-        <input id="points" type="number" inputmode="numeric" min="0" step="1000" value="217000" />
+        <input id="points" type="number" inputmode="numeric" min="0" step="1000" value="450000" />
       </div>
     </div>
 
@@ -145,16 +148,13 @@
       <div class="bar" id="bar">
         <div class="zones"></div>
 
-        <!-- dynamic fill (left or right) -->
         <div class="fill left" id="fillLeft"></div>
         <div class="fill right" id="fillRight"></div>
 
-        <!-- benchmark ticks -->
         <div class="tick" id="tickLow"></div>
         <div class="tick" id="tickTyp"></div>
         <div class="tick" id="tickHigh"></div>
 
-        <!-- marker + label -->
         <div class="marker" id="marker"></div>
         <div class="markerLabel" id="markerLabel"></div>
       </div>
@@ -164,6 +164,12 @@
         <span id="lblTyp"></span>
         <span id="lblHigh"></span>
       </div>
+
+      <div class="scaleRow mono">
+        <span>0.0¢</span>
+        <span>1.0¢</span>
+        <span>2.0¢</span>
+      </div>
     </div>
 
     <div class="scoreRow">
@@ -172,8 +178,8 @@
     </div>
 
     <div class="small">
-      We compute <b>implied value</b> = (cash ÷ points) in ¢/pt and compare it to your Low/Typical/High benchmarks.
-      The marker always stays visible, even when implied value is below Low or above High.
+      Bar scale is fixed from <b>0.0¢ → 2.0¢ per point</b>. Marker shows your implied value (cash ÷ points).
+      Benchmark ticks (Low/Typical/High) are plotted on the same fixed scale.
     </div>
   </div>
 
@@ -187,20 +193,17 @@
       return Math.round(x).toLocaleString() + " pts";
     }
     function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
-
-    // Dynamic scale mapping to keep marker visible even outside [low, high]
-    function cppToPercent(cpp, low, typ, high) {
-      const min = Math.min(low * 0.70, cpp * 0.80);
-      const max = Math.max(high * 1.30, cpp * 1.20);
-      if (max <= min) return 50;
-      let pct = ((cpp - min) / (max - min)) * 100;
-      return clamp(pct, 5, 95); // keep visible
-    }
-
     function setLeftPct(el, pct) { el.style.left = pct + "%"; }
 
+    // Fixed scale: 0.0¢ → 2.0¢
+    function cppToPercent(cpp) {
+      const min = 0.0;
+      const max = 2.0;
+      let pct = ((cpp - min) / (max - min)) * 100;
+      return clamp(pct, 2, 98); // always visible
+    }
+
     function valueScore(implied, low, typ, high) {
-      // Simple 4-level score based on implied CPP vs benchmarks
       if (implied <= 0) return { label: "—", note: "" };
       if (implied < low) return { label: "Poor", note: "Below Low" };
       if (implied < typ) return { label: "Fair", note: "Below Typical" };
@@ -220,15 +223,6 @@
       $("output").textContent = "";
       $("scoreBadge").textContent = "Value score: —";
 
-      // ticks always at 0/50/100 so the zones remain intuitive
-      setLeftPct($("tickLow"), 0);
-      setLeftPct($("tickTyp"), 50);
-      setLeftPct($("tickHigh"), 100);
-
-      $("lblLow").textContent = `Low ${low.toFixed(1)}¢`;
-      $("lblTyp").textContent = `Typical ${typ.toFixed(1)}¢`;
-      $("lblHigh").textContent = `High ${high.toFixed(1)}¢`;
-
       if (!(low > 0 && typ > 0 && high > 0)) {
         $("output").textContent = "Enter positive values for cents/point.";
         return;
@@ -237,9 +231,18 @@
         $("output").textContent = "Make sure Low ≤ Typical ≤ High.";
         return;
       }
+
+      // Place benchmark ticks on fixed 0→2 scale
+      setLeftPct($("tickLow"), clamp((low / 2.0) * 100, 0, 100));
+      setLeftPct($("tickTyp"), clamp((typ / 2.0) * 100, 0, 100));
+      setLeftPct($("tickHigh"), clamp((high / 2.0) * 100, 0, 100));
+
+      $("lblLow").textContent = `Low ${low.toFixed(1)}¢`;
+      $("lblTyp").textContent = `Typical ${typ.toFixed(1)}¢`;
+      $("lblHigh").textContent = `High ${high.toFixed(1)}¢`;
+
       if (!(cash > 0) || !(points > 0)) {
         $("output").textContent = "Enter both a cash price and a points amount.";
-        // put marker at center with label
         setLeftPct($("marker"), 50);
         setLeftPct($("markerLabel"), 50);
         $("markerLabel").textContent = "—";
@@ -251,17 +254,16 @@
       // implied cpp from the two inputs
       const impliedCPP = (cash / points) * 100;
 
-      // Estimated $ value of points using benchmarks
+      // estimated $ value of points using benchmarks
       const low$  = points * (low / 100);
       const typ$  = points * (typ / 100);
       const high$ = points * (high / 100);
 
-      // Guidance + badge
+      // Guidance
       let message = "";
       let badge = "";
-
       if (impliedCPP < low) {
-        message = "💡 Strongly favors paying cash (redemption value is below your LOW benchmark).";
+        message = "💡 Strongly favors paying cash (implied value is below your LOW benchmark).";
         badge = "Pay cash";
       } else if (impliedCPP < typ) {
         message = "↘️ Lean toward paying cash (below your TYPICAL benchmark).";
@@ -276,9 +278,10 @@
 
       const score = valueScore(impliedCPP, low, typ, high);
       $("scoreBadge").textContent = `Value score: ${score.label}${score.note ? " (" + score.note + ")" : ""}`;
+      $("guidance").textContent = message;
 
-      // Output block
-      const deltaVsTypical = cash - typ$; // positive => points "worth more" than cash (good points)
+      // Output
+      const deltaVsTypical = cash - typ$; // positive => points value exceeds cash
       const deltaText = `${deltaVsTypical >= 0 ? "Points (Typical) exceed cash by" : "Cash is lower than Typical points value by"} ${fmtMoney(Math.abs(deltaVsTypical))}.`;
 
       $("output").innerHTML =
@@ -290,27 +293,22 @@
            <span style="color:#444">${deltaText}</span>
          </div>`;
 
-      $("guidance").textContent = message;
-
-      // Marker position (always visible)
-      const markerPct = cppToPercent(impliedCPP, low, typ, high);
+      // Marker on fixed scale
+      const markerPct = cppToPercent(impliedCPP);
       setLeftPct($("marker"), markerPct);
       setLeftPct($("markerLabel"), markerPct);
       $("markerLabel").textContent = impliedCPP.toFixed(2) + "¢";
 
-      // Dynamic fill: push toward whichever side is "better"
-      // - If marker is left of center, fill from left up to marker (cash better)
-      // - If marker is right of center, fill from right up to marker (points better)
-      const center = 50;
-      const leftWidth = clamp(markerPct, 0, center);
-      const rightWidth = clamp(100 - markerPct, 0, 50);
+      // Fill toward better side:
+      // Compare implied to typical; if below typical -> fill left; else fill right.
+      const markerRawPct = clamp(((impliedCPP - 0.0) / (2.0 - 0.0)) * 100, 0, 100);
 
-      if (markerPct < center) {
-        $("fillLeft").style.width = leftWidth + "%";
+      if (impliedCPP < typ) {
+        $("fillLeft").style.width = markerRawPct + "%";
         $("fillRight").style.width = "0%";
-      } else if (markerPct > center) {
+      } else if (impliedCPP > typ) {
         $("fillLeft").style.width = "0%";
-        $("fillRight").style.width = rightWidth + "%";
+        $("fillRight").style.width = (100 - markerRawPct) + "%";
       } else {
         $("fillLeft").style.width = "0%";
         $("fillRight").style.width = "0%";
